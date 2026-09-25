@@ -8,6 +8,8 @@ from sqlalchemy import (
     Text,
     Date,
     Enum as SAEnum,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -23,6 +25,9 @@ from .enums import (
     MilestoneType,
     FollowUpStatus,
     FollowUpPriority,
+    ResourceType,
+    ReservationStatus,
+    ReservationEventType,
 )
 
 
@@ -362,3 +367,116 @@ class CapacityFollowUp(Base):
 
     project = relationship("Project", back_populates="capacity_follow_ups")
     report = relationship("MonthlyCapacityReport")
+
+
+class ParkResourceCapacity(Base):
+    """园区资源容量池：按园区+资源类型登记的可用总量（用地/供电/污水处理）。"""
+
+    __tablename__ = "park_resource_capacities"
+    __table_args__ = (
+        UniqueConstraint("park_id", "resource_type", name="uq_park_resource_capacity"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    park_id = Column(Integer, ForeignKey("industrial_parks.id"), nullable=False, index=True)
+    resource_type = Column(SAEnum(ResourceType), nullable=False, index=True)
+    total_amount = Column(Float, nullable=False)
+    unit = Column(String(32), nullable=False)
+    lock_version = Column(Integer, nullable=False, default=0)
+    remark = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    park = relationship("IndustrialPark")
+
+
+class CapacityReservation(Base):
+    """容量预约单：按资源类型、有效期间（年月粒度）和项目阶段登记的承诺。"""
+
+    __tablename__ = "capacity_reservations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_no = Column(String(64), unique=True, index=True)
+    park_id = Column(Integer, ForeignKey("industrial_parks.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    resource_type = Column(SAEnum(ResourceType), nullable=False, index=True)
+    stage = Column(SAEnum(ProjectStatus), nullable=False)
+    status = Column(
+        SAEnum(ReservationStatus),
+        nullable=False,
+        default=ReservationStatus.DRAFT,
+        index=True,
+    )
+    amount = Column(Float, nullable=False)
+    released_amount = Column(Float, nullable=False, default=0.0)
+    unit = Column(String(32), nullable=False)
+    start_year = Column(Integer, nullable=False)
+    start_month = Column(Integer, nullable=False)
+    end_year = Column(Integer, nullable=False)
+    end_month = Column(Integer, nullable=False)
+    idempotency_key = Column(String(128), unique=True)
+    transfer_from_id = Column(Integer, ForeignKey("capacity_reservations.id"))
+    operator = Column(String(64))
+    remark = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    confirmed_at = Column(DateTime)
+    released_at = Column(DateTime)
+
+    park = relationship("IndustrialPark")
+    project = relationship("Project")
+    transfer_from = relationship("CapacityReservation", remote_side=[id])
+    entries = relationship(
+        "CapacityReservationEntry",
+        back_populates="reservation",
+        cascade="all, delete-orphan",
+        order_by="CapacityReservationEntry.year, CapacityReservationEntry.month",
+    )
+    events = relationship(
+        "CapacityReservationEvent",
+        back_populates="reservation",
+        cascade="all, delete-orphan",
+        order_by="CapacityReservationEvent.created_at, CapacityReservationEvent.id",
+    )
+
+
+class CapacityReservationEntry(Base):
+    """月度台账明细：确认后按月份落账，历史月份明细不可被后续修订覆盖。"""
+
+    __tablename__ = "capacity_reservation_entries"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", "year", "month", name="uq_reservation_month"),
+        Index("ix_entry_park_resource_month", "park_id", "resource_type", "year", "month"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(
+        Integer, ForeignKey("capacity_reservations.id"), nullable=False, index=True
+    )
+    park_id = Column(Integer, ForeignKey("industrial_parks.id"), nullable=False)
+    resource_type = Column(SAEnum(ResourceType), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    reservation = relationship("CapacityReservation", back_populates="entries")
+
+
+class CapacityReservationEvent(Base):
+    """预约操作事件：暂存/确认/修订/释放/转移全程留痕，幂等键防重复入账。"""
+
+    __tablename__ = "capacity_reservation_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(
+        Integer, ForeignKey("capacity_reservations.id"), nullable=False, index=True
+    )
+    event_type = Column(SAEnum(ReservationEventType), nullable=False, index=True)
+    actor = Column(String(64))
+    reason = Column(String(512))
+    payload = Column(Text)
+    idempotency_key = Column(String(128), unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    reservation = relationship("CapacityReservation", back_populates="events")

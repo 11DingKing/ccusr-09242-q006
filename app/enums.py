@@ -74,3 +74,34 @@ class FollowUpPriority(str, Enum):
     MEDIUM = "中"
     HIGH = "高"
     URGENT = "紧急"
+
+
+class ResourceType(str, Enum):
+    LAND = "用地"
+    POWER = "供电"
+    WASTEWATER = "污水处理"
+
+
+class ReservationStatus(str, Enum):
+    DRAFT = "暂存"
+    CONFIRMED = "已确认"
+    RELEASED = "已释放"
+    TRANSFERRED = "已转移"
+
+
+class ReservationEventType(str, Enum):
+    CREATED = "暂存登记"
+    CONFIRMED = "确认"
+    REVISED = "修订"
+    PARTIALLY_RELEASED = "部分释放"
+    RELEASED = "释放"
+    TRANSFERRED_OUT = "转出"
+    TRANSFERRED_IN = "转入"
+    AUTO_RELEASED = "自动释放"
+
+
+RESOURCE_TYPE_DEFAULT_UNIT = {
+    ResourceType.LAND: "亩",
+    ResourceType.POWER: "千伏安",
+    ResourceType.WASTEWATER: "吨/日",
+}

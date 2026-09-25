@@ -19,6 +19,8 @@ ERROR_NOT_FOUND = {
     "capacity_report": "产能登记不存在",
     "follow_up": "跟进事项不存在",
     "capacity_curve": "产能曲线数据不存在",
+    "capacity_pool": "该园区尚未登记此资源类型的容量",
+    "reservation": "容量预约不存在",
 }
 
 ERROR_DUPLICATE = {
@@ -38,6 +40,20 @@ ERROR_STATUS = {
 ERROR_OPERATION_FAILED = {
     "approval": "立项失败",
     "capacity_report": "登记失败",
+}
+
+ERROR_RESERVATION = {
+    "insufficient": "容量不足，预约无法确认",
+    "project_park_mismatch": "项目不属于该园区，无法在此园区登记容量预约",
+    "pool_missing": "该园区尚未登记「{resource_type}」的容量，无法确认预约",
+    "invalid_status": "当前预约状态为「{status}」，不允许执行此操作",
+    "terminal_revision": "已释放或已转移的预约不可再修订",
+    "period_fully_past": "有效期间已全部成为历史月份，无可确认的额度",
+    "release_past_period": "释放生效月份不能早于当月，历史月份的预约不可被覆盖",
+    "transfer_park_mismatch": "目标项目不属于同一园区，容量预约不可跨园区转移",
+    "transfer_no_remaining": "该预约已无未来月份的有效额度，无可转移内容",
+    "transfer_amount_exceeds": "转移量不能超过当前有效额度 {amount}",
+    "transfer_self": "不能转移给原项目自身",
 }
 
 

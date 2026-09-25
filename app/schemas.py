@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import datetime, date
 from typing import Optional, List
 
@@ -12,6 +12,9 @@ from .enums import (
     MilestoneType,
     FollowUpStatus,
     FollowUpPriority,
+    ResourceType,
+    ReservationStatus,
+    ReservationEventType,
 )
 
 
@@ -583,3 +586,188 @@ class CapacityOverviewStatistics(BaseModel):
 
 
 Project.model_rebuild()
+
+
+# ---------- 园区资源容量预约台账 ----------
+
+
+class CapacityPoolBase(BaseModel):
+    park_id: int
+    resource_type: ResourceType
+    total_amount: float = Field(..., gt=0, description="该资源在园区内的可用总量")
+    unit: Optional[str] = Field(None, description="计量单位，缺省按资源类型取默认单位")
+    remark: Optional[str] = None
+
+
+class CapacityPoolCreate(CapacityPoolBase):
+    pass
+
+
+class CapacityPool(CapacityPoolBase):
+    id: int
+    unit: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CommitmentSource(BaseModel):
+    """占用某月容量的一笔既有承诺（拒绝项/可用量明细的来源）。"""
+
+    reservation_id: int
+    reservation_no: Optional[str] = None
+    project_id: int
+    project_name: Optional[str] = None
+    stage: ProjectStatus
+    status: ReservationStatus
+    amount: float
+
+
+class MonthAvailability(BaseModel):
+    year: int
+    month: int
+    capacity: float
+    occupied: float
+    remaining: float
+    sources: List[CommitmentSource] = Field(default_factory=list)
+
+
+class PoolAvailability(BaseModel):
+    park_id: int
+    resource_type: ResourceType
+    unit: str
+    total_amount: float
+    months: List[MonthAvailability]
+
+
+class MonthRejection(BaseModel):
+    """确认被拒绝时，单个拒绝月份的缺口与来源承诺。"""
+
+    year: int
+    month: int
+    requested: float
+    capacity: float
+    occupied: float
+    remaining: float
+    sources: List[CommitmentSource] = Field(default_factory=list)
+
+
+class PeriodFields(BaseModel):
+    start_year: int = Field(..., ge=2000, le=2100)
+    start_month: int = Field(..., ge=1, le=12)
+    end_year: int = Field(..., ge=2000, le=2100)
+    end_month: int = Field(..., ge=1, le=12)
+
+    @model_validator(mode="after")
+    def _check_period_order(self):
+        if (self.start_year, self.start_month) > (self.end_year, self.end_month):
+            raise ValueError("有效期间的起始月份不能晚于结束月份")
+        return self
+
+
+class CapacityReservationCreate(PeriodFields):
+    park_id: int
+    project_id: int
+    resource_type: ResourceType
+    stage: Optional[ProjectStatus] = Field(
+        None, description="登记时项目所处阶段，缺省取项目当前状态"
+    )
+    amount: float = Field(..., gt=0, description="每个有效月份占用的资源量")
+    idempotency_key: Optional[str] = Field(
+        None, max_length=128, description="幂等键，重复提交返回同一预约单"
+    )
+    operator: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class CapacityReservationUpdate(BaseModel):
+    """修订预约：已确认的预约仅重写未来月份台账，历史月份保持不变。"""
+
+    amount: Optional[float] = Field(None, gt=0)
+    start_year: Optional[int] = Field(None, ge=2000, le=2100)
+    start_month: Optional[int] = Field(None, ge=1, le=12)
+    end_year: Optional[int] = Field(None, ge=2000, le=2100)
+    end_month: Optional[int] = Field(None, ge=1, le=12)
+    stage: Optional[ProjectStatus] = None
+    operator: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class ReservationActionRequest(BaseModel):
+    operator: Optional[str] = None
+    reason: Optional[str] = None
+    idempotency_key: Optional[str] = Field(None, max_length=128)
+
+
+class ReservationReleaseRequest(ReservationActionRequest):
+    amount: Optional[float] = Field(
+        None, gt=0, description="释放量，缺省为全部未使用额度"
+    )
+    effective_from_year: Optional[int] = Field(
+        None, ge=2000, le=2100, description="释放生效月份，缺省为当月；历史月份不可释放"
+    )
+    effective_from_month: Optional[int] = Field(None, ge=1, le=12)
+
+
+class ReservationTransferRequest(ReservationActionRequest):
+    target_project_id: int
+    amount: Optional[float] = Field(
+        None, gt=0, description="转移量，缺省为当前全部有效额度"
+    )
+
+
+class CapacityReservationEntryOut(BaseModel):
+    year: int
+    month: int
+    amount: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationEventOut(BaseModel):
+    id: int
+    event_type: ReservationEventType
+    actor: Optional[str] = None
+    reason: Optional[str] = None
+    payload: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationOut(BaseModel):
+    id: int
+    reservation_no: Optional[str] = None
+    park_id: int
+    project_id: int
+    resource_type: ResourceType
+    stage: ProjectStatus
+    status: ReservationStatus
+    amount: float
+    released_amount: float
+    unit: str
+    start_year: int
+    start_month: int
+    end_year: int
+    end_month: int
+    idempotency_key: Optional[str] = None
+    transfer_from_id: Optional[int] = None
+    operator: Optional[str] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    confirmed_at: Optional[datetime] = None
+    released_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationDetail(CapacityReservationOut):
+    entries: List[CapacityReservationEntryOut] = Field(default_factory=list)
+    events: List[CapacityReservationEventOut] = Field(default_factory=list)
+
+
+class ReservationTransferResult(BaseModel):
+    source: CapacityReservationOut
+    target: CapacityReservationOut

@@ -31,6 +31,7 @@ from .services.statistics import (
     get_capacity_overview_statistics as _svc_get_capacity_overview,
     get_project_capacity_curve_data as _svc_get_capacity_curve,
 )
+from .services.capacity_ledger import apply_stage_change_release_rules
 
 
 def get_entity(db: Session, entity_id: int):
@@ -244,6 +245,7 @@ def change_project_status(
     db_project = get_project(db, project_id)
     if not db_project:
         return None
+    from_status = db_project.status
     transition_project_status(
         db,
         project=db_project,
@@ -252,6 +254,14 @@ def change_project_status(
         reason=reason,
         remarks=remarks,
         skip_validation=False,
+    )
+    # 项目撤回或阶段回退时，按规则释放容量预约的未使用额度（同一事务提交）
+    apply_stage_change_release_rules(
+        db,
+        project=db_project,
+        from_status=from_status,
+        to_status=to_status,
+        operator=operator,
     )
     db.commit()
     db.refresh(db_project)

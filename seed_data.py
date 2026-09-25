@@ -17,6 +17,13 @@ from app.enums import (
     IntentStatus,
     MilestoneStatus,
     MilestoneType,
+    ResourceType,
+)
+from app.schemas import CapacityPoolCreate, CapacityReservationCreate
+from app.services.capacity_ledger import (
+    upsert_pool,
+    create_reservation,
+    confirm_reservation,
 )
 
 
@@ -853,6 +860,59 @@ def seed_all():
         db.add_all(all_status_logs)
         db.commit()
         print(f"  ✔ 状态流转日志 {len(all_status_logs)} 条")
+
+        # ---------- 园区资源容量池与容量预约台账 ----------
+        capacity_pools = [
+            (pingxiang_border_port_park.id, ResourceType.LAND, 2000.0, "亩", "一期可出让工业用地"),
+            (pingxiang_border_port_park.id, ResourceType.POWER, 50000.0, "千伏安", "园区变电站可用容量"),
+            (pingxiang_border_port_park.id, ResourceType.WASTEWATER, 3000.0, "吨/日", "污水处理厂剩余能力"),
+            (nanning_ftz_park.id, ResourceType.LAND, 3500.0, "亩", "五象新区工业用地"),
+            (nanning_ftz_park.id, ResourceType.POWER, 80000.0, "千伏安", "片区电网报装上限"),
+            (nanning_ftz_park.id, ResourceType.WASTEWATER, 5000.0, "吨/日", "市政纳管处理能力"),
+        ]
+        for park_id, rtype, total, unit, remark in capacity_pools:
+            upsert_pool(db, CapacityPoolCreate(
+                park_id=park_id, resource_type=rtype,
+                total_amount=total, unit=unit, remark=remark,
+            ))
+        print(f"  ✔ 园区资源容量池 {len(capacity_pools)} 个")
+
+        def _ym(offset):
+            idx = date.today().year * 12 + (date.today().month - 1) + offset
+            return idx // 12, idx % 12 + 1
+
+        sy, sm = _ym(0)
+        ey, em = _ym(11)
+        musang_land = create_reservation(db, CapacityReservationCreate(
+            park_id=nanning_ftz_park.id,
+            project_id=cn_my_musang_king_project.id,
+            resource_type=ResourceType.LAND,
+            stage=cn_my_musang_king_project.status,
+            amount=260.0,
+            start_year=sy, start_month=sm, end_year=ey, end_month=em,
+            operator="系统脚本", remark="猫山王项目一期用地承诺",
+        ))
+        confirm_reservation(db, musang_land.id, operator="系统脚本")
+        musang_water = create_reservation(db, CapacityReservationCreate(
+            park_id=nanning_ftz_park.id,
+            project_id=cn_my_musang_king_project.id,
+            resource_type=ResourceType.WASTEWATER,
+            stage=cn_my_musang_king_project.status,
+            amount=800.0,
+            start_year=sy, start_month=sm, end_year=ey, end_month=em,
+            operator="系统脚本", remark="榴莲加工废水纳管承诺",
+        ))
+        confirm_reservation(db, musang_water.id, operator="系统脚本")
+        create_reservation(db, CapacityReservationCreate(
+            park_id=pingxiang_border_port_park.id,
+            project_id=cn_th_coconut_phase1.id,
+            resource_type=ResourceType.POWER,
+            stage=cn_th_coconut_phase1.status,
+            amount=8000.0,
+            start_year=sy, start_month=sm, end_year=ey, end_month=em,
+            operator="系统脚本", remark="椰子项目用电意向（暂存待核）",
+        ))
+        print("  ✔ 容量预约 3 笔（猫山王用地/污水已确认，椰子用电暂存）")
         print("\n🎉 示例数据植入完成！")
         print("   - 东盟合作主体：泰国2家、马来西亚1家、越南1家、印尼1家")
         print("   - 广西方主体：农垦、华银、北部湾冷链")
