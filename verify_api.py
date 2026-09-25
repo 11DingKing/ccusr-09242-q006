@@ -93,6 +93,34 @@ for lg in logs:
     fs = lg['from_status'] or '(始)'
     print(f"  [{lg['changed_at'][:16]}] {fs:>6} → {lg['to_status']:<6} | {lg['reason']}")
 
+section("9. 园区容量预约台账（凭祥园区）")
+from urllib.parse import urlencode
+from datetime import date
+
+caps = get("/api/v1/capacity-ledger/capacities?park_id=1")
+print(f"已登记资源容量 {len(caps)} 项：")
+for c in caps:
+    end = f"{c['effective_to_year']}-{c['effective_to_month']:02d}" if c['effective_to_year'] else "长期"
+    print(f"  ✦ {c['resource_type']}: {c['total_amount']:,.0f} {c['unit']}（{c['effective_from_year']}-{c['effective_from_month']:02d} 起，{end}，第{c['revision']}版）")
+
+today = date.today()
+end_idx = today.year * 12 + today.month + 2
+q = urlencode({
+    "resource_type": "用地",
+    "start_year": today.year, "start_month": today.month,
+    "end_year": end_idx // 12, "end_month": end_idx % 12 + 1,
+})
+avail = get(f"/api/v1/capacity-ledger/parks/1/availability?{q}")
+print("用地逐月可用量（总量/已承诺/剩余，亩）：")
+for m in avail["months"]:
+    src = "、".join(f"{s['reservation_code']}({s['amount']:,.0f})" for s in m["sources"]) or "-"
+    print(f"  · {m['year']}-{m['month']:02d}: {m['total_capacity']:,.0f} / {m['committed_amount']:,.0f} / {m['remaining_amount']:,.0f} | 来源承诺: {src}")
+
+resvs = get("/api/v1/capacity-ledger/reservations")
+print(f"容量预约 {len(resvs)} 笔：")
+for rv in resvs:
+    print(f"  ✦ {rv['reservation_code']} [{rv['status']}] {rv['resource_type']} @项目{rv['project_id']} 阶段「{rv['stage']}」 {rv['start_year']}-{rv['start_month']:02d}~{rv['end_year']}-{rv['end_month']:02d}")
+
 print()
 print("=" * 60)
 print("  ✅ 所有接口验证通过！服务运行正常。")

@@ -31,6 +31,7 @@ from .services.statistics import (
     get_capacity_overview_statistics as _svc_get_capacity_overview,
     get_project_capacity_curve_data as _svc_get_capacity_curve,
 )
+from .services import capacity_ledger
 
 
 def get_entity(db: Session, entity_id: int):
@@ -241,9 +242,12 @@ def change_project_status(
     reason: Optional[str] = None,
     remarks: Optional[str] = None,
 ):
+    # 先抢占台账写锁，保证状态变更与预约释放规则在同一事务内原子提交
+    capacity_ledger.begin_ledger_write(db)
     db_project = get_project(db, project_id)
     if not db_project:
         return None
+    from_status = db_project.status
     transition_project_status(
         db,
         project=db_project,
@@ -252,6 +256,9 @@ def change_project_status(
         reason=reason,
         remarks=remarks,
         skip_validation=False,
+    )
+    capacity_ledger.apply_stage_change_release(
+        db, db_project, from_status, to_status, operator=operator
     )
     db.commit()
     db.refresh(db_project)
@@ -300,6 +307,7 @@ def list_intents(
 
 
 def create_intent(db: Session, obj_in: schemas.CooperationIntentCreate):
+    capacity_ledger.begin_ledger_write(db)
     db_intent = models.CooperationIntent(**obj_in.model_dump())
     db.add(db_intent)
     project = (
@@ -308,7 +316,12 @@ def create_intent(db: Session, obj_in: schemas.CooperationIntentCreate):
         .first()
     )
     if project:
+        from_status = project.status
         trigger_status_after_intent(db, project)
+        if project.status != from_status:
+            capacity_ledger.apply_stage_change_release(
+                db, project, from_status, project.status
+            )
     db.commit()
     db.refresh(db_intent)
     return get_intent(db, db_intent.id)
@@ -361,6 +374,7 @@ def approve_project(
     project_id: int,
     approval_in: schemas.ProjectApprovalRequest,
 ):
+    capacity_ledger.begin_ledger_write(db)
     project = get_project(db, project_id)
     if not project:
         return None
@@ -385,9 +399,14 @@ def approve_project(
         default_milestones = build_default_milestones(approval_in.approval_date)
         persist_milestones(db, project_id, default_milestones)
 
+    from_status = project.status
     trigger_status_after_approval(
         db, project, approval_in.approval_number, operator=approval_in.operator
     )
+    if project.status != from_status:
+        capacity_ledger.apply_stage_change_release(
+            db, project, from_status, project.status, operator=approval_in.operator
+        )
     db.commit()
     db.refresh(project)
     return project

@@ -12,6 +12,9 @@ from .enums import (
     MilestoneType,
     FollowUpStatus,
     FollowUpPriority,
+    ResourceType,
+    ReservationStatus,
+    LedgerEventType,
 )
 
 
@@ -583,3 +586,231 @@ class CapacityOverviewStatistics(BaseModel):
 
 
 Project.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# 园区容量预约台账
+# ---------------------------------------------------------------------------
+
+
+class ParkResourceCapacityCreate(BaseModel):
+    park_id: int
+    resource_type: ResourceType
+    total_amount: float = Field(..., gt=0)
+    unit: Optional[str] = Field(None, description="缺省按资源类型取默认单位")
+    effective_from_year: int = Field(..., ge=2000, le=2100)
+    effective_from_month: int = Field(..., ge=1, le=12)
+    effective_to_year: Optional[int] = Field(None, ge=2000, le=2100)
+    effective_to_month: Optional[int] = Field(None, ge=1, le=12)
+    note: Optional[str] = None
+    as_of: Optional[date] = Field(None, description="业务基准日，缺省为当天；历史月份不可登记")
+
+
+class ParkResourceCapacityOut(BaseModel):
+    id: int
+    park_id: int
+    resource_type: ResourceType
+    total_amount: float
+    unit: str
+    effective_from_year: int
+    effective_from_month: int
+    effective_to_year: Optional[int] = None
+    effective_to_month: Optional[int] = None
+    revision: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationCreate(BaseModel):
+    park_id: int
+    project_id: int
+    resource_type: ResourceType
+    stage: ProjectStatus = Field(..., description="预约所承诺的项目阶段")
+    start_year: int = Field(..., ge=2000, le=2100)
+    start_month: int = Field(..., ge=1, le=12)
+    end_year: int = Field(..., ge=2000, le=2100)
+    end_month: int = Field(..., ge=1, le=12)
+    monthly_amount: float = Field(..., gt=0, description="期间内每月占用量")
+    remark: Optional[str] = None
+    created_by: Optional[str] = None
+    as_of: Optional[date] = Field(None, description="业务基准日，缺省为当天")
+
+
+class CapacityReservationUpdate(BaseModel):
+    stage: Optional[ProjectStatus] = None
+    start_year: Optional[int] = Field(None, ge=2000, le=2100)
+    start_month: Optional[int] = Field(None, ge=1, le=12)
+    end_year: Optional[int] = Field(None, ge=2000, le=2100)
+    end_month: Optional[int] = Field(None, ge=1, le=12)
+    monthly_amount: Optional[float] = Field(None, gt=0)
+    remark: Optional[str] = None
+    as_of: Optional[date] = None
+
+
+class CapacityReservationPeriodOut(BaseModel):
+    id: int
+    year: int
+    month: int
+    requested_amount: float
+    confirmed_amount: float
+    released_amount: float
+    remaining_amount: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationOut(BaseModel):
+    id: int
+    reservation_code: Optional[str] = None
+    park_id: int
+    project_id: int
+    resource_type: ResourceType
+    stage: ProjectStatus
+    status: ReservationStatus
+    start_year: int
+    start_month: int
+    end_year: int
+    end_month: int
+    remark: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    confirmed_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacityReservationDetail(CapacityReservationOut):
+    periods: List[CapacityReservationPeriodOut] = Field(default_factory=list)
+    events: List["CapacityLedgerEventOut"] = Field(default_factory=list)
+
+
+class CapacityLedgerEventOut(BaseModel):
+    id: int
+    reservation_id: int
+    event_type: LedgerEventType
+    operator: Optional[str] = None
+    reason: Optional[str] = None
+    detail: Optional[dict] = None
+    occurred_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+CapacityReservationDetail.model_rebuild()
+
+
+class ConfirmRequest(BaseModel):
+    reservation_ids: List[int] = Field(..., min_length=1)
+    operator: Optional[str] = None
+    as_of: Optional[date] = None
+
+
+class RejectionSource(BaseModel):
+    reservation_id: int
+    reservation_code: Optional[str] = None
+    project_id: int
+    project_name: Optional[str] = None
+    stage: ProjectStatus
+    year: int
+    month: int
+    amount: float = Field(..., description="该来源承诺在当月占用的量")
+
+
+class RejectionItem(BaseModel):
+    reservation_id: int
+    reservation_code: Optional[str] = None
+    resource_type: ResourceType
+    year: int
+    month: int
+    requested_amount: float
+    total_capacity: Optional[float] = None
+    committed_amount: float
+    remaining_amount: float
+    message: str
+    sources: List[RejectionSource] = Field(default_factory=list)
+
+
+class ConfirmResponse(BaseModel):
+    status: str = Field(..., description="confirmed=全部确认；rejected=容量不足，整批未生效")
+    confirmed: List[CapacityReservationOut] = Field(default_factory=list)
+    rejections: List[RejectionItem] = Field(default_factory=list)
+
+
+class MonthAmount(BaseModel):
+    year: int
+    month: int
+    amount: float
+
+
+class MonthRef(BaseModel):
+    year: int
+    month: int
+
+
+class ReleaseRequest(BaseModel):
+    amount: Optional[float] = Field(None, gt=0, description="每月释放量；缺省释放范围内全部剩余额度")
+    start_year: Optional[int] = Field(None, ge=2000, le=2100)
+    start_month: Optional[int] = Field(None, ge=1, le=12)
+    end_year: Optional[int] = Field(None, ge=2000, le=2100)
+    end_month: Optional[int] = Field(None, ge=1, le=12)
+    reason: str = Field(..., min_length=1, description="释放原因，必填留痕")
+    operator: Optional[str] = None
+    as_of: Optional[date] = None
+
+
+class ReleaseResponse(BaseModel):
+    reservation: CapacityReservationOut
+    released: List[MonthAmount] = Field(default_factory=list)
+    skipped_closed_months: List[MonthRef] = Field(
+        default_factory=list, description="已封存的历史月份，按规则未被修订"
+    )
+
+
+class TransferRequest(BaseModel):
+    target_project_id: int
+    amount: Optional[float] = Field(None, gt=0, description="每月转移量；缺省转移范围内全部剩余额度")
+    start_year: Optional[int] = Field(None, ge=2000, le=2100)
+    start_month: Optional[int] = Field(None, ge=1, le=12)
+    end_year: Optional[int] = Field(None, ge=2000, le=2100)
+    remark: Optional[str] = None
+    operator: Optional[str] = None
+    as_of: Optional[date] = None
+
+
+class TransferResponse(BaseModel):
+    source: CapacityReservationOut
+    target: CapacityReservationOut
+    transferred: List[MonthAmount] = Field(default_factory=list)
+    skipped_closed_months: List[MonthRef] = Field(default_factory=list)
+
+
+class WithdrawRequest(BaseModel):
+    reason: str = Field(..., min_length=1, description="撤回原因，必填留痕")
+    operator: Optional[str] = None
+    as_of: Optional[date] = None
+
+
+class WithdrawResponse(BaseModel):
+    project_id: int
+    released_reservation_ids: List[int] = Field(default_factory=list)
+    reservations: List[CapacityReservationOut] = Field(default_factory=list)
+
+
+class MonthAvailability(BaseModel):
+    year: int
+    month: int
+    total_capacity: Optional[float] = None
+    unit: Optional[str] = None
+    committed_amount: float
+    remaining_amount: Optional[float] = None
+    sources: List[RejectionSource] = Field(default_factory=list)
+
+
+class AvailabilityResponse(BaseModel):
+    park_id: int
+    resource_type: ResourceType
+    months: List[MonthAvailability] = Field(default_factory=list)

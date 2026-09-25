@@ -6,7 +6,9 @@ from .config import settings
 
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    # timeout：SQLite 忙等待时长（秒）。容量台账写事务以 ledger_mutex
+    # 串行化，并发写会在此等待而非立即报 database is locked。
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

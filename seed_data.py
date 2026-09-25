@@ -17,7 +17,10 @@ from app.enums import (
     IntentStatus,
     MilestoneStatus,
     MilestoneType,
+    ResourceType,
 )
+from app import schemas
+from app.services import capacity_ledger
 
 
 def seed_all():
@@ -853,6 +856,64 @@ def seed_all():
         db.add_all(all_status_logs)
         db.commit()
         print(f"  ✔ 状态流转日志 {len(all_status_logs)} 条")
+
+        # 容量预约台账示例：凭祥园区资源容量 + 在谈项目的用地/供电承诺
+        today = date.today()
+        end_idx = today.year * 12 + (today.month - 1) + 11
+        for resource, total, unit in [
+            (ResourceType.LAND, 2000, "亩"),
+            (ResourceType.POWER, 50000, "千瓦"),
+            (ResourceType.WASTEWATER, 8000, "吨/日"),
+        ]:
+            capacity_ledger.register_capacity(db, schemas.ParkResourceCapacityCreate(
+                park_id=pingxiang_border_port_park.id,
+                resource_type=resource,
+                total_amount=total,
+                unit=unit,
+                effective_from_year=today.year,
+                effective_from_month=today.month,
+                note="园区年度基础设施保障能力核定",
+            ))
+        coconut_land = capacity_ledger.create_draft(db, schemas.CapacityReservationCreate(
+            park_id=pingxiang_border_port_park.id,
+            project_id=cn_th_coconut_phase1.id,
+            resource_type=ResourceType.LAND,
+            stage=ProjectStatus.NEGOTIATING,
+            start_year=today.year,
+            start_month=today.month,
+            end_year=end_idx // 12,
+            end_month=end_idx % 12 + 1,
+            monthly_amount=320,
+            remark="首轮洽谈共识：选址凭祥沿边临港产业园B区320亩",
+            created_by="招商一组",
+        ))
+        capacity_ledger.confirm_reservations(db, schemas.ConfirmRequest(
+            reservation_ids=[coconut_land.id],
+            operator="招商运营",
+        ))
+        capacity_ledger.register_capacity(db, schemas.ParkResourceCapacityCreate(
+            park_id=qinfang_collab_park.id,
+            resource_type=ResourceType.POWER,
+            total_amount=60000,
+            unit="千瓦",
+            effective_from_year=today.year,
+            effective_from_month=today.month,
+            note="园区变电站年度供电能力核定",
+        ))
+        capacity_ledger.create_draft(db, schemas.CapacityReservationCreate(
+            park_id=qinfang_collab_park.id,
+            project_id=asean_juice_supply_base.id,
+            resource_type=ResourceType.POWER,
+            stage=ProjectStatus.NEGOTIATING,
+            start_year=today.year,
+            start_month=today.month,
+            end_year=end_idx // 12,
+            end_month=end_idx % 12 + 1,
+            monthly_amount=8000,
+            remark="果汁项目预审用电需求（暂存待确认）",
+            created_by="招商二组",
+        ))
+        print("  ✔ 容量台账：凭祥3类资源容量+椰子项目用地320亩已确认；钦防供电容量+果汁项目用电暂存")
         print("\n🎉 示例数据植入完成！")
         print("   - 东盟合作主体：泰国2家、马来西亚1家、越南1家、印尼1家")
         print("   - 广西方主体：农垦、华银、北部湾冷链")

@@ -8,6 +8,8 @@ from sqlalchemy import (
     Text,
     Date,
     Enum as SAEnum,
+    JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -23,6 +25,9 @@ from .enums import (
     MilestoneType,
     FollowUpStatus,
     FollowUpPriority,
+    ResourceType,
+    ReservationStatus,
+    LedgerEventType,
 )
 
 
@@ -362,3 +367,129 @@ class CapacityFollowUp(Base):
 
     project = relationship("Project", back_populates="capacity_follow_ups")
     report = relationship("MonthlyCapacityReport")
+
+
+class ParkResourceCapacity(Base):
+    """园区资源容量主数据（用地/供电/污水处理）。
+
+    只追加新版本（revision 递增），历史版本永不修改，
+    以保证历史月份的容量承诺可追溯、不被后来的修订覆盖。
+    """
+
+    __tablename__ = "park_resource_capacities"
+    __table_args__ = (
+        UniqueConstraint(
+            "park_id",
+            "resource_type",
+            "effective_from_year",
+            "effective_from_month",
+            name="uq_capacity_revision_start",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    park_id = Column(Integer, ForeignKey("industrial_parks.id"), nullable=False, index=True)
+    resource_type = Column(SAEnum(ResourceType), nullable=False, index=True)
+    total_amount = Column(Float, nullable=False)
+    unit = Column(String(32), nullable=False)
+    effective_from_year = Column(Integer, nullable=False)
+    effective_from_month = Column(Integer, nullable=False)
+    effective_to_year = Column(Integer)
+    effective_to_month = Column(Integer)
+    revision = Column(Integer, nullable=False, default=1)
+    note = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CapacityReservation(Base):
+    """容量预约台账主单：按资源类型 × 有效期间 × 项目阶段登记。"""
+
+    __tablename__ = "capacity_reservations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_code = Column(String(32), unique=True, index=True)
+    park_id = Column(Integer, ForeignKey("industrial_parks.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    resource_type = Column(SAEnum(ResourceType), nullable=False, index=True)
+    stage = Column(SAEnum(ProjectStatus), nullable=False, index=True)
+    status = Column(
+        SAEnum(ReservationStatus),
+        nullable=False,
+        default=ReservationStatus.DRAFT,
+        index=True,
+    )
+    start_year = Column(Integer, nullable=False)
+    start_month = Column(Integer, nullable=False)
+    end_year = Column(Integer, nullable=False)
+    end_month = Column(Integer, nullable=False)
+    remark = Column(Text)
+    created_by = Column(String(64))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    confirmed_at = Column(DateTime)
+    closed_at = Column(DateTime)
+
+    periods = relationship(
+        "CapacityReservationPeriod",
+        back_populates="reservation",
+        cascade="all, delete-orphan",
+        order_by="CapacityReservationPeriod.year, CapacityReservationPeriod.month",
+    )
+    events = relationship(
+        "CapacityLedgerEvent",
+        back_populates="reservation",
+        order_by="CapacityLedgerEvent.id",
+    )
+    project = relationship("Project")
+
+
+class CapacityReservationPeriod(Base):
+    """预约的月度占用行：确认时快照承诺量，释放量逐月累计。"""
+
+    __tablename__ = "capacity_reservation_periods"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", "year", "month", name="uq_reservation_month"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(
+        Integer, ForeignKey("capacity_reservations.id"), nullable=False, index=True
+    )
+    year = Column(Integer, nullable=False, index=True)
+    month = Column(Integer, nullable=False, index=True)
+    requested_amount = Column(Float, nullable=False)
+    confirmed_amount = Column(Float, nullable=False, default=0.0)
+    released_amount = Column(Float, nullable=False, default=0.0)
+
+    reservation = relationship("CapacityReservation", back_populates="periods")
+
+    @property
+    def remaining_amount(self) -> float:
+        return round((self.confirmed_amount or 0.0) - (self.released_amount or 0.0), 6)
+
+
+class CapacityLedgerEvent(Base):
+    """台账事件（追加式审计日志）：每一次登记/确认/释放/转移都留痕。"""
+
+    __tablename__ = "capacity_ledger_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(
+        Integer, ForeignKey("capacity_reservations.id"), nullable=False, index=True
+    )
+    event_type = Column(SAEnum(LedgerEventType), nullable=False, index=True)
+    operator = Column(String(64))
+    reason = Column(String(512))
+    detail = Column(JSON)
+    occurred_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    reservation = relationship("CapacityReservation", back_populates="events")
+
+
+class LedgerMutex(Base):
+    """台账写锁：所有容量写事务的首条语句写本行，串行化并发确认。"""
+
+    __tablename__ = "ledger_mutex"
+
+    id = Column(Integer, primary_key=True)
+    note = Column(String(128))

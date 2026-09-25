@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from .. import models, schemas
 from ..enums import MilestoneStatus, MilestoneType
 from .status_flow import trigger_status_after_milestone_update
+from . import capacity_ledger
 
 
 class MilestoneStateError(ValueError):
@@ -150,6 +151,9 @@ def process_milestone_update(
     update_in: schemas.ProjectMilestoneUpdate,
     operator: Optional[str] = None,
 ) -> models.ProjectMilestone:
+    # 先抢占台账写锁：里程碑触发的项目状态流转会联动容量预约释放，
+    # 二者必须在同一事务内原子提交
+    capacity_ledger.begin_ledger_write(db)
     validate_milestone_state_transition(milestone.status, update_in.status)
     validate_prerequisite_milestones(db, milestone, update_in.status)
 
@@ -161,10 +165,15 @@ def process_milestone_update(
         .first()
     )
     if project:
+        from_status = project.status
         all_milestones = list_milestones_for_project(db, project.id)
         trigger_status_after_milestone_update(
             db, project, all_milestones, operator=operator
         )
+        if project.status != from_status:
+            capacity_ledger.apply_stage_change_release(
+                db, project, from_status, project.status, operator=operator
+            )
 
     db.commit()
     db.refresh(updated)

@@ -74,3 +74,26 @@ class FollowUpPriority(str, Enum):
     MEDIUM = "中"
     HIGH = "高"
     URGENT = "紧急"
+
+
+class ResourceType(str, Enum):
+    LAND = "用地"
+    POWER = "供电"
+    WASTEWATER = "污水处理"
+
+
+class ReservationStatus(str, Enum):
+    DRAFT = "暂存"
+    CONFIRMED = "已确认"
+    RELEASED = "已释放"
+    TRANSFERRED = "已转移"
+
+
+class LedgerEventType(str, Enum):
+    CREATE_DRAFT = "暂存登记"
+    UPDATE_DRAFT = "暂存修订"
+    CONFIRM = "确认占用"
+    RELEASE = "释放额度"
+    TRANSFER_OUT = "转移转出"
+    TRANSFER_IN = "转移转入"
+    AUTO_RELEASE = "规则自动释放"
